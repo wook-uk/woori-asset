@@ -133,7 +133,10 @@ export default function AnalysisResult({
         import("html2canvas"),
       ]);
 
-      const canvas = await html2canvas(captureRef.current, {
+      const container = captureRef.current;
+
+      // 전체 컨테이너를 고해상도 캔버스 하나로 캡처
+      const canvas = await html2canvas(container, {
         scale: 2,
         useCORS: true,
         backgroundColor: "#f8fafc",
@@ -143,37 +146,71 @@ export default function AnalysisResult({
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
-      const margin = 10;
+      const margin = 12;
       const usableW = pageW - 2 * margin;
       const usableH = pageH - 2 * margin;
 
-      // 캔버스 → PDF 좌표 변환 비율
+      // canvas pixel ↔ PDF mm 변환 비율
       const pxPerMM = canvas.width / usableW;
       const pageHeightPx = usableH * pxPerMM;
-      const totalPages = Math.ceil(canvas.height / pageHeightPx);
 
-      for (let page = 0; page < totalPages; page++) {
-        if (page > 0) pdf.addPage();
+      // ── 안전한 분할 지점 계산 ────────────────────────────────
+      // 각 자식 요소(섹션 카드)의 하단 경계를 분할 후보로 사용
+      const containerRect = container.getBoundingClientRect();
+      const safeSplits: number[] = [0];
 
-        const srcY = Math.round(page * pageHeightPx);
-        const srcH = Math.min(Math.round(pageHeightPx), canvas.height - srcY);
-        if (srcH <= 0) break;
+      for (const child of Array.from(container.children) as HTMLElement[]) {
+        if (!child.offsetHeight) continue; // 빈 요소(bottomRef 등) 건너뜀
+        const childRect = child.getBoundingClientRect();
+        // 컨테이너 상단 기준 상대 좌표 → canvas pixel 단위(scale=2)
+        const splitY = Math.round((childRect.bottom - containerRect.top) * 2);
+        if (splitY > 0 && splitY < canvas.height) {
+          safeSplits.push(splitY);
+        }
+      }
+      safeSplits.push(canvas.height);
 
-        // 페이지 크기만큼 캔버스 슬라이스
-        const pageCanvas = document.createElement("canvas");
-        pageCanvas.width = canvas.width;
-        pageCanvas.height = srcH;
-        const ctx = pageCanvas.getContext("2d")!;
-        ctx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+      // ── 페이지별 슬라이스 ────────────────────────────────────
+      // 각 페이지는 pageHeightPx 이하인 safe split point 중 가장 큰 것까지 담음
+      // → 섹션 카드 중간에서 절대 잘리지 않음
+      let pageStart = 0;
+      let isFirst = true;
 
-        const pageImgH = srcH / pxPerMM;
-        pdf.addImage(pageCanvas.toDataURL("image/png"), "PNG", margin, margin, usableW, pageImgH);
+      while (pageStart < canvas.height) {
+        if (!isFirst) pdf.addPage();
+        isFirst = false;
+
+        const pageEnd = pageStart + pageHeightPx;
+
+        // pageEnd 이하인 safe split 중 최댓값 선택
+        let splitAt = pageStart;
+        for (const s of safeSplits) {
+          if (s > pageStart && s <= pageEnd) splitAt = s;
+          else if (s > pageEnd) break;
+        }
+
+        // safe split이 없으면(섹션 하나가 한 페이지보다 큼) → 기계적 분할
+        if (splitAt === pageStart) {
+          splitAt = Math.min(pageEnd, canvas.height);
+        }
+
+        // 슬라이스 캔버스 생성
+        const sliceH = splitAt - pageStart;
+        const sliceCanvas = document.createElement("canvas");
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceH;
+        const ctx = sliceCanvas.getContext("2d")!;
+        ctx.fillStyle = "#f8fafc";
+        ctx.fillRect(0, 0, canvas.width, sliceH);
+        ctx.drawImage(canvas, 0, pageStart, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+
+        const imgH = sliceH / pxPerMM;
+        pdf.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableW, imgH);
+
+        pageStart = splitAt;
       }
 
-      const today = new Date()
-        .toLocaleDateString("ko-KR")
-        .replace(/\. /g, "")
-        .replace(".", "");
+      const today = new Date().toISOString().split("T")[0];
       pdf.save(`AI자산진단_${today}.pdf`);
     } catch (err) {
       console.error("PDF 생성 오류:", err);
