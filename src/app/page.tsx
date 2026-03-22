@@ -9,6 +9,7 @@ import ETFForm from "@/components/ETFForm";
 import DepositForm from "@/components/DepositForm";
 import AnalysisResult from "@/components/AnalysisResult";
 import AssetAllocationChart from "@/components/AssetAllocationChart";
+import RetirementSimulator from "@/components/RetirementSimulator";
 
 const INITIAL_PROFILE: UserProfile = {
   age: 35,
@@ -150,12 +151,18 @@ export default function Home() {
 
           {/* 우측: 결과 */}
           <div className="lg:sticky lg:top-20 lg:self-start space-y-4">
-            {/* 자산 배분 차트 - 자산이 하나라도 있으면 항상 표시 */}
+            {/* 자산 배분 차트 */}
             <AssetAllocationChart
               isa={isaTotal}
               irp={irpTotal}
               etf={etfTotal}
               deposit={depositTotal}
+            />
+
+            {/* 노후 시뮬레이터 */}
+            <RetirementSimulator
+              age={profile.age}
+              currentAssets={totalAssets()}
             />
 
             {!result && !isStreaming && !error && (
@@ -189,6 +196,13 @@ export default function Home() {
               content={result}
               isStreaming={isStreaming}
               error={error}
+              assetSummary={{
+                isa: isaTotal,
+                irp: irpTotal,
+                etf: etfTotal,
+                deposit: depositTotal,
+                total: totalAssets(),
+              }}
             />
 
             {result && !isStreaming && (
